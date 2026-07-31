@@ -1,0 +1,76 @@
+
+data:
+  raw_path: "data/raw/survey.csv"
+  processed_path: "data/processed/"
+  target_column: "treatment"
+  test_size: 0.2
+  random_state: 42
+
+preprocessing:
+  drop_columns:
+    - "Timestamp"
+    - "comments"          # 87% missing, free text, not usable
+    - "state"              # 41% missing, mostly N/A for non-US respondents
+    - "Country"            # high cardinality, low signal vs no_employees/remote_work
+  age_valid_range: [18, 100]   # raw data has garbage values (-1726, 99999999999)
+  gender_normalization: true    # 48 raw free-text values -> Male / Female / Other
+  categorical_columns:
+    - "Gender"
+    - "self_employed"
+    - "family_history"
+    - "work_interfere"
+    - "no_employees"
+    - "remote_work"
+    - "tech_company"
+    - "benefits"
+    - "care_options"
+    - "wellness_program"
+    - "seek_help"
+    - "anonymity"
+    - "leave"
+    - "mental_health_consequence"
+    - "phys_health_consequence"
+    - "coworkers"
+    - "supervisor"
+    - "mental_health_interview"
+    - "phys_health_interview"
+    - "mental_vs_physical"
+    - "obs_consequence"
+  missing_categorical_fill: "Unknown"   # e.g. work_interfere: 21% missing (not asked if no condition)
+  scale_numeric: true
+
+models:
+  logistic_regression:
+    C: 1.0
+    max_iter: 1000
+    random_state: 42
+
+  random_forest_v1:
+    n_estimators: 100
+    max_depth: 5
+    random_state: 42
+
+  random_forest_v2:
+    n_estimators: 300
+    max_depth: 10
+    random_state: 42
+
+  xgboost_v1:
+    n_estimators: 150
+    max_depth: 4
+    learning_rate: 0.1
+    random_state: 42
+
+  xgboost_v2:
+    n_estimators: 300
+    max_depth: 6
+    learning_rate: 0.05
+    random_state: 42
+
+mlflow:
+  experiment_name: "osmi-mental-health-treatment-capstone"
+  tracking_uri: "mlruns"
+
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-4-6"

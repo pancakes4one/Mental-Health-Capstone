@@ -1,0 +1,25 @@
+# Data
+data/*.json
+data/raw/*.csv
+data/processed/*.csv
+
+# Models
+*.pkl
+*.joblib
+models/*
+!models/.gitkeep
+
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# MLflow
+mlruns/
+mlflow.db
