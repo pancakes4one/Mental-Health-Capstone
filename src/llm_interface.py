@@ -9,11 +9,10 @@ load_dotenv()
 
 client = OpenAI(
     base_url="https://api.tokenfactory.nebius.com/v1/",
-    api_key=os.environ.get("NEBIUS_API_KEY")
+    api_key=os.environ.get("NEBIUS_API_KEY") or "not-set"
 )
 
-PARSING_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # cheapest option, used on every message
-RESPONSE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"  # more capable, used once for the final explanation
+MODEL = "meta-llama/Llama-3.3-70B-Instruct"  # confirmed reliable, used for everything
 
 # The fields our trained model needs, with the exact category values it was trained on.
 # The LLM uses this list to know what to look for and how to map casual language
@@ -162,7 +161,7 @@ Respond with ONLY a JSON object in this exact format, no other text:
 """
 
     response = client.chat.completions.create(
-        model=PARSING_MODEL,
+        model=MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
@@ -171,6 +170,11 @@ Respond with ONLY a JSON object in this exact format, no other text:
     )
 
     raw_text = response.choices[0].message.content.strip()
+
+    # Some models (reasoning models like Qwen3) prepend a <think>...</think>
+    # block before the actual answer -- strip that out if present.
+    if "</think>" in raw_text:
+        raw_text = raw_text.split("</think>")[-1].strip()
 
     # Strip markdown code fences if the model wraps the JSON in them
     if raw_text.startswith("```"):
@@ -281,7 +285,7 @@ Do not use markdown formatting. Plain conversational text only.
 """
 
     response = client.chat.completions.create(
-        model=RESPONSE_MODEL,
+        model=MODEL,
         messages=[{"role": "system", "content": system_prompt}],
         temperature=0.7
     )
@@ -362,9 +366,33 @@ def handle_message(user_message, collected, pending_fields=None):
     'pending_fields' is the batch of fields we asked about last turn (None on the first turn).
     Returns (response_text, updated_collected, prediction_or_None, new_pending_fields).
     """
-    parsed = parse_user_input(user_message, pending_fields=pending_fields)
-    cleaned_found, rejected = validate_and_clean(parsed["found"])
-    collected.update(cleaned_found)
+    used_fast_path = False
+    rejected = {}
+
+    # Fast path: if we're only waiting on ONE specific field, check the raw
+    # answer against its allowed values directly -- more reliable than the LLM
+    # for short answers ("f", "m", "n"), and skips an API call entirely.
+    if pending_fields and len(pending_fields) == 1:
+        field = pending_fields[0]
+        direct_value = normalize_value(field, user_message.strip())
+
+        is_valid = False
+        if field == "age":
+            try:
+                is_valid = 13 <= float(direct_value) <= 100
+            except (ValueError, TypeError):
+                is_valid = False
+        elif field in ALLOWED_VALUES and ALLOWED_VALUES[field] is not None:
+            is_valid = direct_value in ALLOWED_VALUES[field]
+
+        if is_valid:
+            collected[field] = direct_value
+            used_fast_path = True
+
+    if not used_fast_path:
+        parsed = parse_user_input(user_message, pending_fields=pending_fields)
+        cleaned_found, rejected = validate_and_clean(parsed["found"])
+        collected.update(cleaned_found)
 
     missing = [f for f in CORE_FIELDS if f not in collected]
     if missing:
