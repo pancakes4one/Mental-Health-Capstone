@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import json
 import joblib
+import yaml
 import mlflow
 import mlflow.sklearn
 from sklearn.model_selection import train_test_split
@@ -13,11 +14,15 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-# --- Configuration ---
-RAW_DATA_PATH = 'data/raw/survey.csv'
-PROCESSED_DATA_PATH = 'data/processed/survey_clean.csv'
-TARGET_COL = 'treatment'
-RANDOM_STATE = 42
+# --- Load configuration ---
+with open('config/config.yaml') as f:
+    config = yaml.safe_load(f)
+
+RAW_DATA_PATH = config['data']['raw_path']
+PROCESSED_DATA_PATH = config['data']['processed_path']
+TARGET_COL = config['data']['target_column']
+TEST_SIZE = config['data']['test_size']
+RANDOM_STATE = config['data']['random_state']
 
 print("--- Step 1: Loading & Preprocessing Data ---")
 df_clean = preprocess(RAW_DATA_PATH, verbose=True)
@@ -29,16 +34,13 @@ X = df_clean.drop(columns=[TARGET_COL])
 y = df_clean[TARGET_COL]
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
+    X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
 )
 
 # Fit the age scaler on TRAINING data only, then apply that same scaler to test data.
-# This avoids leaking test data statistics into the scaling.
 X_train, age_scaler = scale_age(X_train)
 X_test, _ = scale_age(X_test, scaler=age_scaler)
 
-# Save the scaler and the final feature column order, so llm_interface.py can
-# encode new user input the exact same way the model was trained on.
 joblib.dump(age_scaler, 'models/age_scaler.joblib')
 with open('models/feature_columns.json', 'w') as f:
     json.dump(list(X_train.columns), f)
@@ -47,28 +49,28 @@ print("Saved age_scaler.joblib and feature_columns.json to models/")
 print(f"Training set size: {X_train.shape[0]} samples")
 print(f"Testing set size: {X_test.shape[0]} samples")
 
-# --- Step 2: Define Models ---
+# --- Step 2: Build models from config ---
+model_configs = config['models']
+
 models = {
-    "Random_Forest_default": RandomForestClassifier(
-        n_estimators=100, max_depth=10, random_state=RANDOM_STATE, class_weight='balanced'
-    ),
-    "Random_Forest_deeper": RandomForestClassifier(
-        n_estimators=200, max_depth=20, random_state=RANDOM_STATE, class_weight='balanced'
-    ),
-    "Gradient_Boosting_default": GradientBoostingClassifier(
-        n_estimators=100, learning_rate=0.1, max_depth=5, random_state=RANDOM_STATE
-    ),
-    "Gradient_Boosting_slow_lr": GradientBoostingClassifier(
-        n_estimators=200, learning_rate=0.05, max_depth=3, random_state=RANDOM_STATE
-    ),
+    "Random_Forest_default": RandomForestClassifier(**model_configs['random_forest_default']),
+    "Random_Forest_deeper": RandomForestClassifier(**model_configs['random_forest_deeper']),
+    "Gradient_Boosting_default": GradientBoostingClassifier(**model_configs['gradient_boosting_default']),
+    "Gradient_Boosting_slow_lr": GradientBoostingClassifier(**model_configs['gradient_boosting_slow_lr']),
     "Neural_Network": MLPClassifier(
-        hidden_layer_sizes=(64, 32), activation='relu', solver='adam',
-        max_iter=500, random_state=RANDOM_STATE, early_stopping=True, validation_fraction=0.1
+        hidden_layer_sizes=tuple(model_configs['neural_network']['hidden_layer_sizes']),
+        activation=model_configs['neural_network']['activation'],
+        solver=model_configs['neural_network']['solver'],
+        max_iter=model_configs['neural_network']['max_iter'],
+        random_state=model_configs['neural_network']['random_state'],
+        early_stopping=model_configs['neural_network']['early_stopping'],
+        validation_fraction=model_configs['neural_network']['validation_fraction'],
     )
 }
 
 # --- Step 3: Train, Evaluate, and Track with MLflow (one run per model) ---
-mlflow.set_experiment("MentalHealth_Capstone")
+mlflow.set_tracking_uri(config['mlflow']['tracking_uri'])
+mlflow.set_experiment(config['mlflow']['experiment_name'])
 
 results = {}
 
