@@ -43,21 +43,113 @@ REQUIRED_FIELDS = {
     "is_us": "Yes or No — based in the United States",
 }
 
+# Fields we actively ask the user about, batched a few at a time.
+# The rest (less critical or opinion-heavy fields) get a reasonable
+# neutral default below, unless the user happens to mention them.
+CORE_FIELDS = [
+    "age", "gender", "family_history", "work_interfere",
+    "benefits", "remote_work", "is_us"
+]
 
-def parse_user_input(user_message):
+# Human-readable labels for the questions we actually ask (CORE_FIELDS only)
+READABLE_LABELS = {
+    "age": "Age",
+    "gender": "Gender",
+    "family_history": "Family history of mental illness",
+    "work_interfere": "How much mental health interferes with work",
+    "benefits": "Employer provides mental health benefits",
+    "remote_work": "Work remotely",
+    "is_us": "Located in the United States",
+}
+
+# The exact values each field is allowed to take. Used to reject invalid/nonsense
+# answers instead of silently accepting them (e.g. age of 788, or a typo).
+ALLOWED_VALUES = {
+    "age": None,  # validated separately as a numeric range, see validate_and_clean()
+    "gender": ["male", "female", "other"],
+    "self_employed": ["Yes", "No"],
+    "family_history": ["Yes", "No"],
+    "work_interfere": ["Never", "Rarely", "Sometimes", "Often", "Not applicable"],
+    "no_employees": ["1-5", "6-25", "26-100", "100-500", "500-1000", "More than 1000"],
+    "remote_work": ["Yes", "No"],
+    "tech_company": ["Yes", "No"],
+    "benefits": ["Yes", "No", "Unsure"],
+    "care_options": ["Yes", "No", "Unsure"],
+    "wellness_program": ["Yes", "No", "Unsure"],
+    "seek_help": ["Yes", "No", "Unsure"],
+    "anonymity": ["Yes", "No", "Unsure"],
+    "leave": ["Very easy", "Somewhat easy", "Unsure", "Somewhat difficult", "Very difficult"],
+    "mental_health_consequence": ["Yes", "No", "Unsure"],
+    "phys_health_consequence": ["Yes", "No", "Unsure"],
+    "coworkers": ["Yes", "No", "Some of them"],
+    "supervisor": ["Yes", "No", "Some of them"],
+    "mental_health_interview": ["Yes", "No", "Unsure"],
+    "phys_health_interview": ["Yes", "No", "Unsure"],
+    "mental_vs_physical": ["Yes", "No", "Unsure"],
+    "obs_consequence": ["Yes", "No"],
+    "is_us": ["Yes", "No"],
+}
+
+DEFAULT_VALUES = {
+    "self_employed": "No",
+    "no_employees": "26-100",
+    "tech_company": "Yes",
+    "care_options": "Unsure",
+    "leave": "Unsure",
+    "wellness_program": "Unsure",
+    "seek_help": "Unsure",
+    "anonymity": "Unsure",
+    "mental_health_consequence": "Unsure",
+    "phys_health_consequence": "Unsure",
+    "coworkers": "Some of them",
+    "supervisor": "Some of them",
+    "mental_health_interview": "Unsure",
+    "phys_health_interview": "Unsure",
+    "mental_vs_physical": "Unsure",
+    "obs_consequence": "No",
+}
+
+QUESTIONS_PER_BATCH = 1
+
+# Natural-language phrasing for each core question, asked one at a time
+QUESTIONS = {
+    "age": "What's your age?",
+    "gender": "What's your gender? (male/female/other)",
+    "family_history": "Do you have a family history of mental illness? (Yes/No)",
+    "work_interfere": "How much does your mental health interfere with work? (Never/Rarely/Sometimes/Often/Not applicable)",
+    "benefits": "Does your employer provide mental health benefits? (Yes/No/Unsure)",
+    "remote_work": "Do you work remotely? (Yes/No)",
+    "is_us": "Are you located in the United States? (Yes/No)",
+}
+
+
+def parse_user_input(user_message, pending_fields=None):
     """
     Sends the user's message to the LLM and asks it to extract whichever
-    REQUIRED_FIELDS it can find. Returns a dict with two keys:
+    REQUIRED_FIELDS it can find. If pending_fields is given (the fields we
+    just asked about), the LLM uses that context to interpret short answers
+    like "yes" correctly, instead of guessing blind.
+    Returns a dict with two keys:
       - "found": {field_name: value, ...} for fields it could extract
       - "missing": [field_name, ...] for fields it could not find
     """
     field_list = "\n".join(f"- {name}: {desc}" for name, desc in REQUIRED_FIELDS.items())
 
+    pending_note = ""
+    if pending_fields:
+        pending_desc = "\n".join(f"- {name}: {REQUIRED_FIELDS[name]}" for name in pending_fields)
+        pending_note = f"""
+IMPORTANT: The user was just asked specifically about these fields, in this order:
+{pending_desc}
+If their message is a short or direct answer (e.g. "yes", "no", "sometimes", or a
+list of short answers), interpret it as answering these pending fields, in order.
+"""
+
     system_prompt = f"""You extract structured survey answers from a user's message.
 
 Here are the fields to look for, and the exact allowed values for each:
 {field_list}
-
+{pending_note}
 Read the user's message and extract any of these fields you can confidently determine.
 Map casual language to the exact allowed values (e.g. "I work remote" -> remote_work: "Yes").
 Do not guess a value if it isn't stated or clearly implied.
@@ -133,26 +225,145 @@ def encode_features(found, feature_columns, age_scaler):
             row[col_name] = 1
 
     age_value = float(found['age'])
-    scaled_age = age_scaler.transform([[age_value]])[0][0]
+    scaled_age = age_scaler.transform(pd.DataFrame([[age_value]], columns=['age']))[0][0]
     if 'age' in row:
         row['age'] = scaled_age
 
     return pd.DataFrame([row], columns=feature_columns)
 
 
-if __name__ == "__main__":
-    # Full example with every required field, to test encoding independently of parsing
-    example_found = {
-        "age": "29", "gender": "female", "self_employed": "No", "family_history": "Yes",
-        "work_interfere": "Sometimes", "no_employees": "26-100", "remote_work": "Yes",
-        "tech_company": "Yes", "benefits": "No", "care_options": "Unsure",
-        "wellness_program": "No", "seek_help": "Unsure", "anonymity": "Unsure",
-        "leave": "Somewhat easy", "mental_health_consequence": "Unsure",
-        "phys_health_consequence": "No", "coworkers": "Some of them", "supervisor": "Yes",
-        "mental_health_interview": "No", "phys_health_interview": "No",
-        "mental_vs_physical": "Unsure", "obs_consequence": "No", "is_us": "Yes"
-    }
+def load_best_model():
+    """Loads the best-performing trained model (by F1 score) from MLflow."""
+    from evaluate import get_best_run
+    import mlflow.sklearn
+
+    best_run = get_best_run()
+    run_id = best_run['run_id']
+    model = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
+    return model, best_run['tags.mlflow.runName']
+
+
+def predict(encoded_row, model):
+    """Runs the model on the encoded row. Returns (prediction, probability)."""
+    prediction = model.predict(encoded_row)[0]
+    probability = model.predict_proba(encoded_row)[0][1] if hasattr(model, 'predict_proba') else None
+    return prediction, probability
+
+
+def generate_response(found, prediction, probability):
+    """Uses the LLM to turn the raw prediction into a clear, conversational explanation."""
+    label = "likely to seek mental health treatment" if prediction == 1 else "less likely to seek mental health treatment"
+    prob_text = f"{probability * 100:.1f}%" if probability is not None else "unknown"
+
+    system_prompt = f"""You are explaining a prediction from a machine learning model trained on a workplace mental health survey.
+
+The model predicts this person is: {label}
+Model confidence: {prob_text}
+
+Context the user provided: {json.dumps(found)}
+
+Write a short, clear, conversational response (3-5 sentences) that:
+- States the prediction and confidence level in plain language
+- Briefly mentions 1-2 factors from their answers that likely influenced it
+- Includes a caveat that this is a statistical estimate from survey data, not a clinical diagnosis, and gently encourages talking to a mental health professional if they have real concerns
+
+Do not use markdown formatting. Plain conversational text only.
+"""
+
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "system", "content": system_prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
+
+
+def ask_for_missing(missing_fields):
+    """Asks the next single missing field as a natural question."""
+    next_field = missing_fields[0]
+    return QUESTIONS.get(next_field, f"Can you tell me: {READABLE_LABELS.get(next_field, next_field)}?")
+
+
+def validate_and_clean(found):
+    """
+    Removes any field whose value is invalid -- not in its allowed list,
+    or (for age) not a realistic number. Invalid fields are dropped so
+    they get asked again instead of silently used.
+    """
+    cleaned = {}
+    for field, value in found.items():
+        if field == "age":
+            try:
+                age_val = float(value)
+                if 18 <= age_val <= 100:
+                    cleaned[field] = value
+                # else: invalid age, drop it -- will be re-asked
+            except (ValueError, TypeError):
+                pass  # not a number, drop it
+        elif field in ALLOWED_VALUES and ALLOWED_VALUES[field] is not None:
+            if value in ALLOWED_VALUES[field]:
+                cleaned[field] = value
+            # else: not one of the allowed values, drop it -- will be re-asked
+        else:
+            cleaned[field] = value
+    return cleaned
+
+
+def handle_message(user_message, collected, pending_fields=None):
+    """
+    Main entry point for one turn of conversation.
+    'collected' is a dict that persists across turns (e.g. in Streamlit session state).
+    'pending_fields' is the batch of fields we asked about last turn (None on the first turn).
+    Returns (response_text, updated_collected, prediction_or_None, new_pending_fields).
+    """
+    parsed = parse_user_input(user_message, pending_fields=pending_fields)
+    cleaned_found = validate_and_clean(parsed["found"])
+    collected.update(cleaned_found)
+
+    missing = [f for f in CORE_FIELDS if f not in collected]
+    if missing:
+        next_batch = missing[:QUESTIONS_PER_BATCH]
+        return ask_for_missing(missing), collected, None, next_batch
+
+    # Fill in reasonable defaults for the fields we didn't actively ask about
+    for field, default_value in DEFAULT_VALUES.items():
+        collected.setdefault(field, default_value)
 
     age_scaler, feature_columns = load_artifacts()
-    encoded_row = encode_features(example_found, feature_columns, age_scaler)
-    print(encoded_row.T)
+    encoded_row = encode_features(collected, feature_columns, age_scaler)
+
+    model, model_name = load_best_model()
+    prediction, probability = predict(encoded_row, model)
+
+    response_text = generate_response(collected, prediction, probability)
+    response_text = f"Thanks for answering those questions!\n\n{response_text}"
+    return response_text, collected, prediction, []
+
+
+WELCOME_MESSAGE = (
+    "Hi! I can estimate whether someone is likely to seek mental health treatment, "
+    "based on a model trained on real workplace survey data.\n\n"
+    "To get started, tell me a bit about yourself — for example: your age, gender, "
+    "whether you work remotely, your company size, and whether you have a family "
+    "history of mental illness. I'll ask a few follow-up questions if I need more info."
+)
+
+
+if __name__ == "__main__":
+    print(WELCOME_MESSAGE)
+    print("\n(type 'quit' to exit, 'show' to see collected answers)\n")
+    collected = {}
+    pending_fields = None
+
+    while True:
+        user_message = input("You: ")
+        if user_message.lower() == "quit":
+            break
+        if user_message.lower() == "show":
+            print(f"\nCollected so far: {json.dumps(collected, indent=2)}\n")
+            continue
+
+        response_text, collected, prediction, pending_fields = handle_message(
+            user_message, collected, pending_fields
+        )
+        print(f"\nAssistant: {response_text}\n")
