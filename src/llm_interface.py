@@ -12,7 +12,8 @@ client = OpenAI(
     api_key=os.environ.get("NEBIUS_API_KEY")
 )
 
-MODEL = "meta-llama/Llama-3.3-70B-Instruct"
+PARSING_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # cheapest option, used on every message
+RESPONSE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"  # more capable, used once for the final explanation
 
 # The fields our trained model needs, with the exact category values it was trained on.
 # The LLM uses this list to know what to look for and how to map casual language
@@ -161,7 +162,7 @@ Respond with ONLY a JSON object in this exact format, no other text:
 """
 
     response = client.chat.completions.create(
-        model=MODEL,
+        model=PARSING_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
@@ -280,7 +281,7 @@ Do not use markdown formatting. Plain conversational text only.
 """
 
     response = client.chat.completions.create(
-        model=MODEL,
+        model=RESPONSE_MODEL,
         messages=[{"role": "system", "content": system_prompt}],
         temperature=0.7
     )
@@ -297,17 +298,44 @@ def ask_for_missing(missing_fields, rejected=None):
     return question
 
 
+# Common abbreviations/shorthand the LLM sometimes doesn't map consistently.
+# Checked before falling back to case-insensitive matching against ALLOWED_VALUES.
+SYNONYMS = {
+    "gender": {"f": "female", "m": "male", "fem": "female"},
+    "work_interfere": {"na": "Not applicable", "n/a": "Not applicable"},
+}
+
+
+def normalize_value(field, value):
+    """Tries to map a value to its exact allowed form: synonym lookup, then case-insensitive match."""
+    if field not in ALLOWED_VALUES or ALLOWED_VALUES[field] is None:
+        return value
+
+    value_lower = str(value).strip().lower()
+
+    if field in SYNONYMS and value_lower in SYNONYMS[field]:
+        return SYNONYMS[field][value_lower]
+
+    for allowed in ALLOWED_VALUES[field]:
+        if allowed.lower() == value_lower:
+            return allowed
+
+    return value  # no match found, leave as-is (validate_and_clean will reject it)
+
+
 def validate_and_clean(found):
     """
-    Removes any field whose value is invalid -- not in its allowed list,
-    or (for age) not a realistic number. Invalid fields are dropped so
-    they get asked again instead of silently used.
+    Normalizes common abbreviations/case differences, then removes any field
+    whose value is still invalid -- not in its allowed list, or (for age) not
+    a realistic number. Invalid fields are dropped so they get asked again.
     Returns (cleaned_dict, rejected_dict) where rejected_dict maps
     field_name -> a short explanation of why it was rejected.
     """
     cleaned = {}
     rejected = {}
-    for field, value in found.items():
+    for field, raw_value in found.items():
+        value = normalize_value(field, raw_value)
+
         if field == "age":
             try:
                 age_val = float(value)
