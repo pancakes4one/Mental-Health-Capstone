@@ -154,7 +154,7 @@ I came to understand that building an AI application is about much more than tra
 
 **What was challenging:** Challenges arose from simple changes such as renaming my project folder which broke my virtual environment, causing Python version conflicts, package mismatches, and MLflow compatibility issues. Fixing those problems took as much time as building the model.
 
-It was also a challegne to keepin the feature encoding used at prediction time perfectly consistent with what the model was actually trained on. I encountered a bug where I was fitting the scaler on the whole dataset instead of only the training split which is classic data leakage.
+It was also a challenge to keep the feature encoding used at prediction time perfectly consistent with what the model was actually trained on. I encountered a bug where I was fitting the scaler on the whole dataset instead of only the training split which is classic data leakage.
 
 Working with a live third-party API also meant handling instability: model names changing, an unexpected reasoning-model output format, and version mismatches between a local MLflow database and the installed MLflow package.
 
