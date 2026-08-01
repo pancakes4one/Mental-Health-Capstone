@@ -255,13 +255,22 @@ def generate_response(found, prediction, probability):
     label = "likely to seek mental health treatment" if prediction == 1 else "less likely to seek mental health treatment"
     prob_text = f"{probability * 100:.1f}%" if probability is not None else "unknown"
 
+    age_val = float(found.get("age", 0))
+    extrapolation_note = ""
+    if age_val < 18:
+        extrapolation_note = (
+            "\nNote: the underlying model was trained only on survey respondents aged 18-100. "
+            "This person's age falls outside that range, so mention that this prediction is an "
+            "extrapolation beyond the model's training data and should be treated with extra caution."
+        )
+
     system_prompt = f"""You are explaining a prediction from a machine learning model trained on a workplace mental health survey.
 
 The model predicts this person is: {label}
 Model confidence: {prob_text}
 
 Context the user provided: {json.dumps(found)}
-
+{extrapolation_note}
 Write a short, clear, conversational response (3-5 sentences) that:
 - States the prediction and confidence level in plain language
 - Briefly mentions 1-2 factors from their answers that likely influenced it
@@ -278,10 +287,14 @@ Do not use markdown formatting. Plain conversational text only.
     return response.choices[0].message.content.strip()
 
 
-def ask_for_missing(missing_fields):
-    """Asks the next single missing field as a natural question."""
+def ask_for_missing(missing_fields, rejected=None):
+    """Asks the next single missing field as a natural question, explaining first if their last answer was rejected."""
     next_field = missing_fields[0]
-    return QUESTIONS.get(next_field, f"Can you tell me: {READABLE_LABELS.get(next_field, next_field)}?")
+    question = QUESTIONS.get(next_field, f"Can you tell me: {READABLE_LABELS.get(next_field, next_field)}?")
+
+    if rejected and next_field in rejected:
+        return f"{rejected[next_field]} {question}"
+    return question
 
 
 def validate_and_clean(found):
@@ -289,24 +302,29 @@ def validate_and_clean(found):
     Removes any field whose value is invalid -- not in its allowed list,
     or (for age) not a realistic number. Invalid fields are dropped so
     they get asked again instead of silently used.
+    Returns (cleaned_dict, rejected_dict) where rejected_dict maps
+    field_name -> a short explanation of why it was rejected.
     """
     cleaned = {}
+    rejected = {}
     for field, value in found.items():
         if field == "age":
             try:
                 age_val = float(value)
-                if 18 <= age_val <= 100:
+                if 13 <= age_val <= 100:
                     cleaned[field] = value
-                # else: invalid age, drop it -- will be re-asked
+                else:
+                    rejected[field] = "That doesn't look like a realistic age."
             except (ValueError, TypeError):
-                pass  # not a number, drop it
+                rejected[field] = "That didn't look like a valid age."
         elif field in ALLOWED_VALUES and ALLOWED_VALUES[field] is not None:
             if value in ALLOWED_VALUES[field]:
                 cleaned[field] = value
-            # else: not one of the allowed values, drop it -- will be re-asked
+            else:
+                rejected[field] = "I didn't quite catch a valid answer for that one."
         else:
             cleaned[field] = value
-    return cleaned
+    return cleaned, rejected
 
 
 def handle_message(user_message, collected, pending_fields=None):
@@ -317,13 +335,13 @@ def handle_message(user_message, collected, pending_fields=None):
     Returns (response_text, updated_collected, prediction_or_None, new_pending_fields).
     """
     parsed = parse_user_input(user_message, pending_fields=pending_fields)
-    cleaned_found = validate_and_clean(parsed["found"])
+    cleaned_found, rejected = validate_and_clean(parsed["found"])
     collected.update(cleaned_found)
 
     missing = [f for f in CORE_FIELDS if f not in collected]
     if missing:
         next_batch = missing[:QUESTIONS_PER_BATCH]
-        return ask_for_missing(missing), collected, None, next_batch
+        return ask_for_missing(missing, rejected), collected, None, next_batch
 
     # Fill in reasonable defaults for the fields we didn't actively ask about
     for field, default_value in DEFAULT_VALUES.items():
