@@ -4,6 +4,9 @@ An end-to-end ML application that predicts whether someone is likely to seek
 mental health treatment, based on workplace and demographic factors — with a
 natural-language chat interface built on top of the trained model.
 
+## Demo
+[Watch the demo video](https://drive.google.com/file/d/1Pns3XEdv6KiZ59CW8_18MP21q6_2xD5_/view?usp=drive_link)
+
 ## What it does
 
 The app combines two pieces:
@@ -17,8 +20,8 @@ The app combines two pieces:
    asks a few natural-language questions, parses the answers, runs them
    through the trained model, and explains the prediction in plain English.
 
-Who it's for: anyone curious how workplace factors relate to mental health
-treatment-seeking, or reviewing this as a demonstration of an end-to-end ML +
+Who it's for: anyone curious how workplace and demographic factors relate 
+to mental health treatment-seeking, or reviewing this as a demonstration of an end-to-end ML +
 LLM pipeline (this was built as a course capstone project).
 
 ## Setup
@@ -134,7 +137,7 @@ requiring feature scaling to perform well, unlike the Neural Network.
   response as an extrapolation beyond the model's training range.
 - **`country` was collapsed to a binary `is_us` flag** rather than one-hot
   encoding every country, since most countries in the dataset had very few
-  respondents (high cardinality, sparse signal for a dataset this size).
+  respondents.
 - **Model availability on Nebius Token Factory changes over time** (the
   original small parsing model used during development was later removed
   from the catalog). The interface now uses one consistent model
@@ -151,12 +154,18 @@ I came to understand that building an AI application is about much more than tra
 
 **What was challenging:** Challenges arose from simple changes such as renaming my project folder which broke my virtual environment, causing Python version conflicts, package mismatches, and MLflow compatibility issues. Fixing those problems took as much time as building the model.
 
-Keeping the feature encoding used at prediction time perfectly consistent with what the model was actually trained on. I encountered a bug where I was fitting the scaler on the whole dataset instead of only the training split which is classic data leakage.
+It was also a challegne to keepin the feature encoding used at prediction time perfectly consistent with what the model was actually trained on. I encountered a bug where I was fitting the scaler on the whole dataset instead of only the training split which is classic data leakage.
 
-Working with a live third-party API also meant handling real instability: model names changing, an unexpected reasoning-model output format, and version mismatches between a local MLflow database and the installed MLflow package.
+Working with a live third-party API also meant handling instability: model names changing, an unexpected reasoning-model output format, and version mismatches between a local MLflow database and the installed MLflow package.
 
 I iterated a lot on what to ask the user, eventually cutting it to the most predictive 7 fields.
 
-**What I'd improve with more time:** I would compare a reduced "Feature Set B" by dropping low-signal or redundant columns against the full feature set to see how a simpler model performs.
+**What I'd improve with more time:** I would compare a reduced "Feature Set B". I would try combining overlapping features, for example, like coworkers and supervisor, which both measure comfort discussing mental health with people at work, into a single feature. I'd compare that reduced feature set against the full one to see how a simpler model performs.
+
+I'd also focus more on the US-specific data, since about 60% of respondents were US-based. state was in the original dataset but I dropped it early on due to missing values for non-US respondents. I would want to add it back in for a US-only analysis and see whether treatment-seeking actually differs meaningfully from state to state.
+
+I'd also want to look more closely at tech_company specifically. The dataset explicitly asks whether someone works at a tech company, which made me expect it to be one of the more meaningful splits in the data — I didn't dig into whether treatment-seeking actually looks different between tech and non-tech respondents, and I think that's worth exploring.
+
+I'd also want to spend more time testing faster, cheaper models for the parsing step. I ran into a few models being deprecated or removed from Nebius's catalog mid-project, which pushed me toward one larger, reliable model for simplicity.
 
 Extend the chat interface to optionally ask about the remaining fields for users who want a more precise prediction rather than the fast 7-question default.
