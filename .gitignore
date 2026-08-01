@@ -8,6 +8,8 @@ data/processed/*.csv
 *.joblib
 models/*
 !models/.gitkeep
+models/age_scaler.joblib
+models/feature_columns.json
 
 # Environment
 .env

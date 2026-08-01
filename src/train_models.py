@@ -1,12 +1,14 @@
 import pandas as pd
 import numpy as np
+import json
+import joblib
 import mlflow
 import mlflow.sklearn
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier
-from preprocess import preprocess
+from preprocess import preprocess, scale_age
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -30,11 +32,22 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
 )
 
+# Fit the age scaler on TRAINING data only, then apply that same scaler to test data.
+# This avoids leaking test data statistics into the scaling.
+X_train, age_scaler = scale_age(X_train)
+X_test, _ = scale_age(X_test, scaler=age_scaler)
+
+# Save the scaler and the final feature column order, so llm_interface.py can
+# encode new user input the exact same way the model was trained on.
+joblib.dump(age_scaler, 'models/age_scaler.joblib')
+with open('models/feature_columns.json', 'w') as f:
+    json.dump(list(X_train.columns), f)
+print("Saved age_scaler.joblib and feature_columns.json to models/")
+
 print(f"Training set size: {X_train.shape[0]} samples")
 print(f"Testing set size: {X_test.shape[0]} samples")
 
 # --- Step 2: Define Models ---
-# 5 configurations: covers 3 algorithms, with 2 extra variations for Random Forest and Gradient Boosting
 models = {
     "Random_Forest_default": RandomForestClassifier(
         n_estimators=100, max_depth=10, random_state=RANDOM_STATE, class_weight='balanced'
